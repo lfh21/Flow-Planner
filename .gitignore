@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.agent_memory.md
 results/
 flow_planner.egg-info/
 checkpoints/

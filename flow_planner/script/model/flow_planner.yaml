@@ -30,6 +30,7 @@ flow_ode:
     beta: 1.5  # this beta distribution shifts to early steps of denoising
   cfg_weight: ${..cfg_weight}
   sample_steps: 4
+  sample_solver: torchdiffeq
   sample_method: midpoint
   sample_temperature: 1.0
 

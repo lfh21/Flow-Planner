@@ -102,11 +102,19 @@ def ensure_runtime_config(cfg: Any, device: str) -> Any:
     return cfg
 
 
-def load_flowplanner(config_file: str, ckpt_file: str, device: str, sample_steps: int | None):
+def load_flowplanner(
+    config_file: str,
+    ckpt_file: str,
+    device: str,
+    sample_steps: int | None,
+    sample_solver: str | None,
+):
     cfg = OmegaConf.load(config_file)
     cfg = ensure_runtime_config(cfg, device)
     if sample_steps is not None:
         cfg.model.flow_ode.sample_steps = int(sample_steps)
+    if sample_solver is not None:
+        cfg.model.flow_ode.sample_solver = sample_solver
 
     model = instantiate(cfg.model).to(device)
     state = torch.load(ckpt_file, map_location=device, weights_only=True)
@@ -158,6 +166,23 @@ def main() -> None:
     parser.add_argument("--num_workers", type=int, default=2)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--sample_steps", type=int, default=None)
+    parser.add_argument(
+        "--sample_solver",
+        default=None,
+        choices=[
+            "torchdiffeq",
+            "euler",
+            "midpoint",
+            "rk2",
+            "dpm",
+            "ab2",
+            "multistep",
+            "deis",
+            "deis3",
+            "ab3",
+        ],
+        help="Override cfg.model.flow_ode.sample_solver. The dpm alias uses Flow-Matching AB2 multistep.",
+    )
     parser.add_argument("--cfg_weight", type=float, default=None)
     parser.add_argument("--warmup_batches", type=int, default=3)
     parser.add_argument("--output_json", default=None)
@@ -175,7 +200,13 @@ def main() -> None:
     if device == "cuda" and not torch.cuda.is_available():
         device = "cpu"
 
-    cfg, model = load_flowplanner(args.config_file, args.ckpt_file, device, args.sample_steps)
+    cfg, model = load_flowplanner(
+        args.config_file,
+        args.ckpt_file,
+        device,
+        args.sample_steps,
+        args.sample_solver,
+    )
     if args.cfg_weight is None:
         args.cfg_weight = float(cfg.model.cfg_weight)
 
@@ -198,6 +229,7 @@ def main() -> None:
     print(f"[eval] torch = {torch.__version__}")
     print(f"[eval] use_cfg = {args.use_cfg}  cfg_weight = {args.cfg_weight}")
     print(f"[eval] sample_steps = {cfg.model.flow_ode.sample_steps}")
+    print(f"[eval] sample_solver = {cfg.model.flow_ode.get('sample_solver', 'torchdiffeq')}")
     print(f"[eval] adapter = {args.diffusionplanner_1w_adapter}")
     print(f"[eval] dataset size = {len(dataset)} / {total}")
     print(f"[eval] batch_size = {args.batch_size}")
@@ -242,6 +274,8 @@ def main() -> None:
 
     metrics = {
         "num_samples": int(ade_all.numel()),
+        "sample_solver": str(cfg.model.flow_ode.get("sample_solver", "torchdiffeq")),
+        "sample_steps": int(cfg.model.flow_ode.sample_steps),
         "ade_mean": float(ade_all.mean().item()),
         "ade_std": float(ade_all.std().item()) if ade_all.numel() > 1 else 0.0,
         "ade_median": float(ade_all.median().item()),

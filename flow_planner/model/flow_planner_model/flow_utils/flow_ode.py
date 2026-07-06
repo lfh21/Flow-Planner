@@ -3,6 +3,7 @@
 
 import torch
 from flow_planner.model.flow_planner_model.flow_utils.velocity_model import VelocityModel
+from flow_planner.model.flow_planner_model.flow_utils.flow_solver import sample_flow_ode
 from flow_planner.model.model_base import Scheduler
 from flow_matching.solver.ode_solver import ODESolver
 
@@ -47,16 +48,29 @@ class FlowODE(Scheduler):
         '''
         velocity_func = self.translation_funcs[(model_pred_type, 'velocity')]
         velocity_model = VelocityModel(model_fn, self.path, velocity_func, use_cfg=use_cfg, cfg_weight=self.cfg_weight)
-        
-        solver = ODESolver(velocity_model=velocity_model)
-        
+
         x_init = x_init * self.sample_params['sample_temperature']
-        step_size = 1.0 / self.sample_params['sample_steps']
-        sample = solver.sample(x_init=x_init,
-                               step_size=step_size,
-                               method=self.sample_params['sample_method'],
-                               **model_extra)
-        
+        steps = int(self.sample_params['sample_steps'])
+        solver_name = str(self.sample_params.get('sample_solver', 'torchdiffeq')).lower()
+
+        if solver_name == 'torchdiffeq':
+            solver = ODESolver(velocity_model=velocity_model)
+            step_size = 1.0 / steps
+            sample = solver.sample(
+                x_init=x_init,
+                step_size=step_size,
+                method=self.sample_params['sample_method'],
+                **model_extra
+            )
+        else:
+            sample = sample_flow_ode(
+                velocity_model=velocity_model,
+                x_init=x_init,
+                steps=steps,
+                solver=solver_name,
+                **model_extra
+            )
+
         return sample
     
     def identity(self, x, xt, t):
