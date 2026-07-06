@@ -16,7 +16,7 @@ import torch
 from torch.utils.data import DataLoader
 
 
-DEFAULT_SOLVERS = ["euler", "midpoint", "ab2", "deis"]
+DEFAULT_SOLVERS = ["euler", "midpoint", "ab2", "deis", "flow_dpm"]
 
 
 def seed_all(seed: int) -> None:
@@ -239,6 +239,9 @@ def main() -> None:
         "deis": args.sample_steps,
         "deis3": args.sample_steps,
         "ab3": args.sample_steps,
+        "flow_dpm": args.sample_steps,
+        "flow_dpm_solver": args.sample_steps,
+        "sana_dpm": args.sample_steps,
     }
 
     print(f"[benchmark] device = {device}")

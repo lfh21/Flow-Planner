@@ -180,6 +180,9 @@ def main() -> None:
             "deis",
             "deis3",
             "ab3",
+            "flow_dpm",
+            "flow_dpm_solver",
+            "sana_dpm",
         ],
         help="Override cfg.model.flow_ode.sample_solver. The dpm alias uses Flow-Matching AB2 multistep.",
     )

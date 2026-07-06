@@ -3,7 +3,7 @@
 
 import torch
 from flow_planner.model.flow_planner_model.flow_utils.velocity_model import VelocityModel
-from flow_planner.model.flow_planner_model.flow_utils.flow_solver import sample_flow_ode
+from flow_planner.model.flow_planner_model.flow_utils.flow_solver import flow_dpm_solver_sample, sample_flow_ode
 from flow_planner.model.model_base import Scheduler
 from flow_matching.solver.ode_solver import ODESolver
 
@@ -60,6 +60,20 @@ class FlowODE(Scheduler):
                 x_init=x_init,
                 step_size=step_size,
                 method=self.sample_params['sample_method'],
+                **model_extra
+            )
+        elif solver_name in {'flow_dpm', 'flow_dpm_solver', 'sana_dpm', 'dpmsolver++'}:
+            runtime_cfg_weight = model_extra.pop('cfg_weight', self.cfg_weight)
+            if runtime_cfg_weight is None:
+                runtime_cfg_weight = self.cfg_weight
+            sample = flow_dpm_solver_sample(
+                model_fn=model_fn,
+                x_init=x_init,
+                steps=steps,
+                use_cfg=use_cfg,
+                cfg_weight=runtime_cfg_weight,
+                model_pred_type=model_pred_type,
+                timestep_shift=self.sample_params.get('timestep_shift', 1.0),
                 **model_extra
             )
         else:
