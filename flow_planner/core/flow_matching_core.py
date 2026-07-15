@@ -22,8 +22,9 @@ class FlowMatchingCore(Core):
         self.loss_weights = loss_weights
         
     def train_step(self, model, data: NuPlanDataSample):
-        
-        data = self.input_aug(data)
+        if self.input_aug is not None:
+            data = self.input_aug(data)
+
         prediction, loss_dict = model(data, mode='train')
         
         total_loss = sum([loss_dict[k] * self.loss_weights[k] for k in self.loss_weights.keys()])

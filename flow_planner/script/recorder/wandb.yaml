@@ -1,0 +1,6 @@
+wandb:
+  _target_: flow_planner.recorder.wandb.WandBRecorder
+  project: ${wandb_project}
+  name: ${job_name}
+  save_dir: ${save_dir}
+  rank: ${oc.env:RANK,0}

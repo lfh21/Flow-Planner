@@ -5,3 +5,4 @@ __pycache__/
 results/
 flow_planner.egg-info/
 checkpoints/
+training_log/

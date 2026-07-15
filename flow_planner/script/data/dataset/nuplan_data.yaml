@@ -6,3 +6,4 @@ train:
   predicted_neighbor_num: ${model.neighbor_pred_num}
   future_len: ${model.future_len}
   future_downsampling_method: uniform
+  diffusionplanner_1w_adapter: false

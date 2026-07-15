@@ -171,7 +171,8 @@ def trainer(cfg: DictConfig):
             
     logger.info(f"Training finished - Time consumed: {time.strftime('%H:%M:%S', time.gmtime(time.time()-timer))}")
     
-    torch.distributed.destroy_process_group()
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
     
 if __name__ == '__main__':
     trainer()

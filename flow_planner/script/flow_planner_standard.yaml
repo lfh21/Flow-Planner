@@ -16,6 +16,7 @@ seed: 3402
 device: cuda
 num_workers: 4
 use_wandb: false
+wandb_project: flowplanner_training
 pin_mem: true
 
 train:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark Flow-Planner ODE solvers against a reference sampler."""
+"""Benchmark Flow-Planner solvers for latency and ground-truth ADE/FDE."""
 
 from __future__ import annotations
 
@@ -68,6 +68,30 @@ def summarize_latency(values: list[float]) -> dict[str, float]:
     }
 
 
+def summarize_metric(values: torch.Tensor) -> dict[str, float]:
+    if values.numel() == 0:
+        return {
+            "count": 0,
+            "mean_m": 0.0,
+            "median_m": 0.0,
+            "std_m": 0.0,
+            "p95_m": 0.0,
+            "min_m": 0.0,
+            "max_m": 0.0,
+        }
+
+    arr = values.detach().cpu().numpy().astype(np.float64)
+    return {
+        "count": int(arr.size),
+        "mean_m": float(arr.mean()),
+        "median_m": float(np.median(arr)),
+        "std_m": float(arr.std()),
+        "p95_m": float(np.percentile(arr, 95)),
+        "min_m": float(arr.min()),
+        "max_m": float(arr.max()),
+    }
+
+
 def empty_accumulator() -> dict:
     return {
         "latencies_ms": [],
@@ -83,6 +107,8 @@ def empty_accumulator() -> dict:
 
 
 def update_quality(acc: dict, pred: torch.Tensor, gt_xy: torch.Tensor) -> None:
+    """Accumulate ADE/FDE directly against dataset ego-future ground truth."""
+
     pred_xy = pred[:, 0, :, :2]
     dist = torch.norm(pred_xy - gt_xy, dim=-1)
     acc["ade"].append(dist.mean(dim=-1).detach().cpu())
@@ -103,12 +129,26 @@ def update_diff(acc: dict, pred: torch.Tensor, ref: torch.Tensor) -> None:
 def finalize_solver(acc: dict, ref_acc: dict | None = None) -> dict:
     ade = torch.cat(acc["ade"]) if acc["ade"] else torch.empty(0)
     fde = torch.cat(acc["fde"]) if acc["fde"] else torch.empty(0)
+    ade_summary = summarize_metric(ade)
+    fde_summary = summarize_metric(fde)
     result = {
         "latency": summarize_latency(acc["latencies_ms"]),
-        "ade_mean": float(ade.mean().item()) if ade.numel() else 0.0,
-        "fde_mean": float(fde.mean().item()) if fde.numel() else 0.0,
-        "ade_median": float(ade.median().item()) if ade.numel() else 0.0,
-        "fde_median": float(fde.median().item()) if fde.numel() else 0.0,
+        "quality_vs_ground_truth": {
+            "prediction": "model_output[:, 0, :, :2]",
+            "ground_truth": "batch.ego_future[:, :, :2]",
+            "unit": "meter",
+            "ade": ade_summary,
+            "fde": fde_summary,
+        },
+        # Keep these flat fields for backwards compatibility with old result parsers.
+        "ade_mean": ade_summary["mean_m"],
+        "fde_mean": fde_summary["mean_m"],
+        "ade_median": ade_summary["median_m"],
+        "fde_median": fde_summary["median_m"],
+        "ade_std": ade_summary["std_m"],
+        "fde_std": fde_summary["std_m"],
+        "ade_p95": ade_summary["p95_m"],
+        "fde_p95": fde_summary["p95_m"],
     }
     if ref_acc is None:
         result["output_diff_vs_reference"] = {
@@ -128,42 +168,79 @@ def finalize_solver(acc: dict, ref_acc: dict | None = None) -> dict:
         "allclose_1e_2": bool(acc["allclose_1e_2"]),
         "allclose_1e_1": bool(acc["allclose_1e_1"]),
     }
-    result["ade_delta_vs_reference"] = result["ade_mean"] - float(torch.cat(ref_acc["ade"]).mean().item())
-    result["fde_delta_vs_reference"] = result["fde_mean"] - float(torch.cat(ref_acc["fde"]).mean().item())
+    ref_ade = torch.cat(ref_acc["ade"]) if ref_acc["ade"] else torch.empty(0)
+    ref_fde = torch.cat(ref_acc["fde"]) if ref_acc["fde"] else torch.empty(0)
+    ade_delta = ade_summary["mean_m"] - (float(ref_ade.mean().item()) if ref_ade.numel() else 0.0)
+    fde_delta = fde_summary["mean_m"] - (float(ref_fde.mean().item()) if ref_fde.numel() else 0.0)
+    result["gt_ade_delta_vs_reference"] = ade_delta
+    result["gt_fde_delta_vs_reference"] = fde_delta
+    result["ade_delta_vs_reference"] = ade_delta
+    result["fde_delta_vs_reference"] = fde_delta
     return result
 
 
 def markdown_table(results: dict, reference_solver: str, solvers: list[str]) -> str:
-    rows = [
-        "| Solver | NFE | Mean latency ms | Median latency ms | P95 ms | Speedup vs ref | Mean abs diff | RMSE diff | Max abs diff | ADE mean | FDE mean | ADE delta | FDE delta |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
-    ]
     ref_mean = results["solvers"][reference_solver]["latency"]["mean_ms"]
     ordered = [reference_solver] + solvers
+    quality_rows = [
+        "## Ground-truth ADE/FDE",
+        "",
+        "Prediction: `model_output[:, 0, :, :2]`; ground truth: `batch.ego_future[:, :, :2]`; unit: meter.",
+        "",
+        "| Solver | NFE | Mean latency ms | Median latency ms | P95 ms | Speedup vs ref | ADE mean | ADE median | ADE std | ADE p95 | FDE mean | FDE median | FDE std | FDE p95 | ADE delta vs ref | FDE delta vs ref |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    diff_rows = [
+        "",
+        "## Output Diff Vs Reference (diagnostic)",
+        "",
+        "These values compare solver outputs under the same per-sample random seed; they are not ADE/FDE quality metrics.",
+        "",
+        "| Solver | Mean abs diff | RMSE diff | Max abs diff | Allclose 1e-2 | Allclose 1e-1 |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
     for solver in ordered:
         item = results["solvers"][solver]
         lat = item["latency"]
+        quality = item["quality_vs_ground_truth"]
+        ade = quality["ade"]
+        fde = quality["fde"]
         diff = item["output_diff_vs_reference"]
         speedup = ref_mean / lat["mean_ms"] if lat["mean_ms"] else 0.0
-        rows.append(
+        quality_rows.append(
             "| {solver} | {nfe} | {mean:.2f} | {median:.2f} | {p95:.2f} | {speedup:.2f}x | "
-            "{mad:.6f} | {rmse:.6f} | {maxdiff:.6f} | {ade:.4f} | {fde:.4f} | {aded:.4f} | {fded:.4f} |".format(
+            "{ade_mean:.4f} | {ade_median:.4f} | {ade_std:.4f} | {ade_p95:.4f} | "
+            "{fde_mean:.4f} | {fde_median:.4f} | {fde_std:.4f} | {fde_p95:.4f} | "
+            "{ade_delta:.4f} | {fde_delta:.4f} |".format(
                 solver=solver,
                 nfe=item["nfe"],
                 mean=lat["mean_ms"],
                 median=lat["median_ms"],
                 p95=lat["p95_ms"],
                 speedup=speedup,
+                ade_mean=ade["mean_m"],
+                ade_median=ade["median_m"],
+                ade_std=ade["std_m"],
+                ade_p95=ade["p95_m"],
+                fde_mean=fde["mean_m"],
+                fde_median=fde["median_m"],
+                fde_std=fde["std_m"],
+                fde_p95=fde["p95_m"],
+                ade_delta=item.get("gt_ade_delta_vs_reference", 0.0),
+                fde_delta=item.get("gt_fde_delta_vs_reference", 0.0),
+            )
+        )
+        diff_rows.append(
+            "| {solver} | {mad:.6f} | {rmse:.6f} | {maxdiff:.6f} | {close2} | {close1} |".format(
+                solver=solver,
                 mad=diff["mean_abs_diff"],
                 rmse=diff["rmse_diff"],
                 maxdiff=diff["max_abs_diff"],
-                ade=item["ade_mean"],
-                fde=item["fde_mean"],
-                aded=item.get("ade_delta_vs_reference", 0.0),
-                fded=item.get("fde_delta_vs_reference", 0.0),
+                close2=diff["allclose_1e_2"],
+                close1=diff["allclose_1e_1"],
             )
         )
-    return "\n".join(rows) + "\n"
+    return "\n".join(quality_rows + diff_rows) + "\n"
 
 
 def main() -> None:
@@ -250,6 +327,8 @@ def main() -> None:
     print(f"[benchmark] torch = {torch.__version__}")
     print(f"[benchmark] dataset = {len(dataset)} / {total}, batch_size = 1")
     print(f"[benchmark] sample_steps = {args.sample_steps}")
+    print(f"[benchmark] use_cfg = {args.use_cfg}, cfg_weight = {args.cfg_weight}")
+    print("[benchmark] quality = model_output[:, 0, :, :2] vs batch.ego_future[:, :, :2] (meter)")
     print(f"[benchmark] reference = {args.reference_solver}")
     print(f"[benchmark] solvers = {', '.join(solvers)}")
     print(f"[benchmark] warmup = {args.warmup}")
@@ -285,6 +364,13 @@ def main() -> None:
         "batch_size": 1,
         "warmup": int(args.warmup),
         "sample_steps": int(args.sample_steps),
+        "use_cfg": bool(args.use_cfg),
+        "cfg_weight": float(args.cfg_weight),
+        "quality_metric": {
+            "prediction": "model_output[:, 0, :, :2]",
+            "ground_truth": "batch.ego_future[:, :, :2]",
+            "unit": "meter",
+        },
         "reference_solver": args.reference_solver,
         "solvers": {},
     }

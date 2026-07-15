@@ -191,17 +191,54 @@ class NuPlanDataSample:
 
 
 class NuPlanDataset(Dataset):
-    def __init__(self, data_dir, data_list, past_neighbor_num, predicted_neighbor_num, future_len, future_downsampling_method, max_num=None):
+    def __init__(
+        self,
+        data_dir,
+        data_list,
+        past_neighbor_num,
+        predicted_neighbor_num,
+        future_len,
+        future_downsampling_method,
+        max_num=None,
+        diffusionplanner_1w_adapter=False,
+    ):
         self.data_dir = data_dir
         self.data_list = openjson(data_list)
         self._past_neighbor_num = past_neighbor_num
         self._predicted_neighbor_num = predicted_neighbor_num
         self._future_len = future_len
         self._future_downsampling_method = future_downsampling_method
+        self._diffusionplanner_1w_adapter = diffusionplanner_1w_adapter
 
         self.fail_token = []
 
         self.data_list = self.data_list if max_num is None else self.data_list[:max_num]
+
+    @staticmethod
+    def _pad_diffusionplanner_ego_history(ego_agent_past):
+        if ego_agent_past.shape[-1] != 7:
+            return ego_agent_past
+
+        heading = ego_agent_past[..., 2:3]
+        zeros = ego_agent_past.new_zeros(*ego_agent_past.shape[:-1], 6)
+        return torch.cat(
+            [
+                ego_agent_past[..., :2],
+                heading.cos(),
+                heading.sin(),
+                ego_agent_past[..., 3:7],
+                zeros,
+            ],
+            dim=-1,
+        )
+
+    @staticmethod
+    def _pad_diffusionplanner_ego_current(ego_current_state):
+        if ego_current_state.shape[-1] != 10:
+            return ego_current_state
+
+        zeros = ego_current_state.new_zeros(*ego_current_state.shape[:-1], 6)
+        return torch.cat([ego_current_state, zeros], dim=-1)
 
     def __len__(self):
         return len(self.data_list)
@@ -245,6 +282,10 @@ class NuPlanDataset(Dataset):
         ego_agent_past = torch.from_numpy(data['ego_agent_past'])
         ego_current_state = torch.from_numpy(data['ego_current_state'])
         ego_agent_future = torch.from_numpy(data['ego_agent_future']).to(torch.float32)
+
+        if self._diffusionplanner_1w_adapter:
+            ego_agent_past = self._pad_diffusionplanner_ego_history(ego_agent_past)
+            ego_current_state = self._pad_diffusionplanner_ego_current(ego_current_state)
 
         neighbor_agents_past = torch.from_numpy(data['neighbor_agents_past'][:self._past_neighbor_num])
         neighbor_agents_future = torch.from_numpy(data['neighbor_agents_future'][:self._predicted_neighbor_num])
